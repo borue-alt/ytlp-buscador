@@ -260,8 +260,14 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
    ===================================================================== */
 
 const GO_LIVE='2026-09-01';               // puesta en marcha de la fase 1 (desde aquí cubre el catálogo)
-const SITE_URL_DEMO='https://vinateaytoyama.sharepoint.com/sites/YTLP';  // SUPUESTO
+/* ===== CONEXIÓN PRECARGADA (editar aquí) =====
+   Pega los dos Id. de la app «YTLP Buscador» (Entra ID › Registros de aplicaciones › Información general).
+   No son secretos. Con ambos completos, el buscador pide iniciar sesión y lee SharePoint directamente. */
+const PRESET_TENANT_ID='5d66dd42-f62c-4f3e-9cb6-cf2a29a623a4';   // Id. de directorio (inquilino)
+const PRESET_CLIENT_ID='a34d182b-9d94-4f6c-9d91-419739444a5a';   // Id. de aplicación (cliente)
+const SITE_URL_DEMO='https://vinateaytoyama.sharepoint.com/sites/YTLP';
 const LIB_DEMO='Documentos de clientes';
+const LIB_URL_DEMO='DocumentosClientes';   // nombre en la URL de la biblioteca (lo crea cargar_en_sharepoint.ps1)
 
 /* ---------- Listas maestras (en real: listas SharePoint «Clientes-Dominios» y «Tipos documentales») ---------- */
 const CLIENTS=[
@@ -323,7 +329,7 @@ const MockSource={
       docs.push({id:'m'+n,nombre,clienteId:cli,tipo,fecha,vigencia:vig,hasta:o.hasta||null,trabajador:trab||null,abogado:ab.n,area:ab.a,
         estado:o.estado||'Validado',disc:!!o.disc,reemplazadoPor:null,recepciones:o.rec||1,origen:o.origen||c.email,
         registrado:o.reg||addDays(fecha>GO_LIVE?fecha:GO_LIVE,2+n%9),size:o.size||(120+((n*7919)%900))*1000,
-        url:`${SITE_URL_DEMO}/${encodeURIComponent(LIB_DEMO)}/${encodeURIComponent(c.corto)}/${encodeURIComponent(t.corto)}/${encodeURIComponent(nombre)}`,
+        url:`${SITE_URL_DEMO}/${LIB_URL_DEMO}/${encodeURIComponent(c.corto)}/${encodeURIComponent(t.corto)}/${encodeURIComponent(nombre)}`,
         texto:o.texto||`${t.nombre.toUpperCase()}\n${c.nombre}${trab?'\nTrabajador: '+trab:''}\nFecha: ${fmtDate(fecha)}`,motivos:o.motivos||null,conf:o.conf||null});
     };
     // Andina Retail
@@ -397,21 +403,27 @@ function normDoc(d){
    ===================================================================== */
 const DEFAULT_MAP={nombre:'FileLeafRef',cliente:'Cliente',tipo:'TipoDocumental',fecha:'FechaDocumento',vigencia:'Vigencia',hasta:'VigenteHasta',
   trabajador:'Trabajador',abogado:'Abogado',area:'Area',estado:'Estado',disc:'Disciplinario',reemplazadoPor:'VersionMasReciente',recepciones:'Recepciones',origen:'CorreoOrigen',confianza:'Confianza'};
-const DEFAULT_CFG={tenantId:'',clientId:'',siteUrl:SITE_URL_DEMO,library:LIB_DEMO,map:DEFAULT_MAP,contentSearch:true};
+const DEFAULT_CFG={tenantId:PRESET_TENANT_ID,clientId:PRESET_CLIENT_ID,siteUrl:SITE_URL_DEMO,library:LIB_DEMO,map:DEFAULT_MAP,contentSearch:true};
 let msalApp=null;
 function loadScript(src){return new Promise((ok,ko)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>ko(new Error('No se pudo cargar '+src));document.head.appendChild(s)})}
-async function getToken(cfg){
+class NeedLogin extends Error{constructor(){super('Falta iniciar sesión')}}
+const SCOPES=['Sites.Read.All','User.Read'];
+async function ensureMsal(cfg){
   if(!window.msal) await loadScript('https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.27.0/lib/msal-browser.min.js');
   if(!msalApp){
-    msalApp=new msal.PublicClientApplication({auth:{clientId:cfg.clientId,authority:'https://login.microsoftonline.com/'+cfg.tenantId,redirectUri:location.origin+location.pathname},cache:{cacheLocation:'sessionStorage'}});
+    msalApp=new msal.PublicClientApplication({auth:{clientId:cfg.clientId,authority:'https://login.microsoftonline.com/'+cfg.tenantId,redirectUri:location.origin+location.pathname},cache:{cacheLocation:'localStorage'}});
     await msalApp.initialize();
-    await msalApp.handleRedirectPromise();
+    const r=await msalApp.handleRedirectPromise();          // vuelve del inicio de sesión de Microsoft
+    if(r&&r.account) msalApp.setActiveAccount(r.account);
   }
-  const scopes=['Sites.Read.All','User.Read'];
-  let acct=msalApp.getAllAccounts()[0];
-  if(!acct){const r=await msalApp.loginPopup({scopes});acct=r.account;}
-  try{return (await msalApp.acquireTokenSilent({scopes,account:acct})).accessToken}
-  catch(e){return (await msalApp.acquireTokenPopup({scopes,account:acct})).accessToken}
+}
+// interactive=false: solo usa una sesión guardada (al abrir la página). true: redirige a Microsoft (tras un toque del usuario).
+async function getToken(cfg,interactive){
+  await ensureMsal(cfg);
+  const acct=msalApp.getActiveAccount()||msalApp.getAllAccounts()[0];
+  if(!acct){if(!interactive) throw new NeedLogin();await msalApp.loginRedirect({scopes:SCOPES});return new Promise(()=>{})}
+  try{return (await msalApp.acquireTokenSilent({scopes:SCOPES,account:acct})).accessToken}
+  catch(e){if(!interactive) throw new NeedLogin();await msalApp.acquireTokenRedirect({scopes:SCOPES,account:acct});return new Promise(()=>{})}
 }
 async function graph(token,path,opt={}){
   const r=await fetch(path.startsWith('http')?path:'https://graph.microsoft.com/v1.0'+path,{...opt,headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',Prefer:'HonorNonIndexedQueriesWarningMayFailRandomly',...(opt.headers||{})}});
@@ -421,8 +433,8 @@ async function graph(token,path,opt={}){
 function fv(v){if(v==null) return null;if(typeof v==='object') return v.Label||v.LookupValue||v.Email||v.title||null;return v}
 const GraphSource={
   name:'SharePoint',
-  async load(cfg){
-    const token=await getToken(cfg);
+  async load(cfg,interactive){
+    const token=await getToken(cfg,interactive);
     const u=new URL(cfg.siteUrl);
     const site=await graph(token,`/sites/${u.hostname}:${u.pathname.replace(/\/$/,'')}`);
     const list=await graph(token,`/sites/${site.id}/lists/${encodeURIComponent(cfg.library)}`);
@@ -461,20 +473,25 @@ const GraphSource={
 /* =====================================================================
    Estado
    ===================================================================== */
-const S={view:'buscar',docs:[],loading:true,source:store('ytlp-f2-src')==='graph'&&(store('ytlp-f2-cfg')||{}).clientId?'graph':'mock',cfg:Object.assign({},DEFAULT_CFG,store('ytlp-f2-cfg')||{}),
+const S={view:'buscar',docs:[],loading:true,source:'mock',cfg:Object.assign({},DEFAULT_CFG,store('ytlp-f2-cfg')||{}),
   role:store('ytlp-f2-role')||'Procesal',q:'',f:emptyFilters(),sort:'rel',limit:20,last:null,log:store('ytlp-f2-log')||[],
   contentHits:null,connMsg:null,sheet:false};
 S.cfg.map=Object.assign({},DEFAULT_MAP,S.cfg.map||{});
+['tenantId','clientId','siteUrl','library'].forEach(k=>{if(!S.cfg[k]) S.cfg[k]=DEFAULT_CFG[k]});
+if(/vinateatoyama\.sharepoint/.test(S.cfg.siteUrl)) S.cfg.siteUrl=SITE_URL_DEMO;   // corrige el dominio de versiones anteriores
+S.source=store('ytlp-f2-src2')==='mock'?'mock':(S.cfg.tenantId&&S.cfg.clientId?'graph':'mock');
 function emptyFilters(){return {cliente:'',tipos:[],trabajador:'',desde:'',hasta:'',vig:'todas',area:'',abogado:'',formatos:[],pend:true,disc:false}}
 function saveLog(){store('ytlp-f2-log',S.log.slice(-500))}
 
-async function loadData(){
-  S.loading=true;render();
+function cfgReady(){return !!(S.cfg.tenantId&&S.cfg.clientId&&S.cfg.siteUrl&&S.cfg.library)}
+async function loadData(interactive){
+  S.loading=true;S.needLogin=false;render();
   try{
-    if(S.source==='graph'){S.docs=await GraphSource.load(S.cfg);S.connMsg={c:'ok',t:`Conectado: ${S.docs.length} documentos leídos de «${S.cfg.library}».`};}
+    if(S.source==='graph'){S.docs=await GraphSource.load(S.cfg,interactive);S.connMsg={c:'ok',t:`Conectado: ${S.docs.length} documentos leídos de «${S.cfg.library}».`};}
     else S.docs=await MockSource.load();
   }catch(e){
-    S.connMsg={c:'bad',t:'No se pudo conectar: '+e.message};S.source='mock';store('ytlp-f2-src','mock');S.docs=await MockSource.load();toast('Se volvió a los datos simulados');
+    if(e instanceof NeedLogin){S.needLogin=true;S.docs=[];}
+    else{S.connMsg={c:'bad',t:'No se pudo conectar: '+e.message};S.docs=[];S.needLogin=true;S.loginErr=e.message;}
   }
   S.loading=false;render();
 }
@@ -589,6 +606,7 @@ function render(){
 }
 
 function viewSearch(){
+  if(S.needLogin&&!S.loading) return loginHTML();
   const EX=['RIT vigente de Andina Retail','boletas de Juan Quispe 2025','contrato de Pedro Huamán','liquidación de Luis Rojas','vigencia de poder Minera Cordillera','descargos disciplinarios Clínica Santa Lucía'];
   const crit=hasCriteria();
   return `<section class="panel hero">
@@ -602,7 +620,7 @@ function viewSearch(){
   <div class="layout">
     ${S.sheet?'<div class="fscrim" data-act="closeSheet"></div>':''}
     <aside class="panel filters ${S.sheet?'open':''}" aria-label="Filtros">${filtersHTML()}</aside>
-    <section>${S.loading?'<div class="panel" style="padding:24px">Cargando catálogo…</div>':crit?resultsHTML():welcomeHTML()}</section>
+    <section>${S.needLogin?loginHTML():S.loading?'<div class="panel" style="padding:24px">Cargando catálogo…</div>':crit?resultsHTML():welcomeHTML()}</section>
   </div>`;
 }
 function understoodHTML(){
@@ -678,6 +696,14 @@ function noResHTML(pend){
   }
   return `<div class="nores"><h3>No figura en el catálogo</h3><ul>${items.map(i=>`<li>${i}</li>`).join('')}</ul>${mail}</div>`;
 }
+function loginHTML(){
+  return `<div class="panel" style="padding:24px;text-align:center;border-top:4px solid var(--brand)">
+   <h2 style="font-size:20px;margin-bottom:6px">Inicia sesión para buscar</h2>
+   <p class="muted" style="margin-bottom:16px">El buscador lee la biblioteca «${esc(S.cfg.library)}» de SharePoint con tu cuenta del estudio. Solo verás los documentos a los que tienes acceso.</p>
+   ${S.loginErr?`<div class="status bad" style="text-align:left;margin-bottom:14px">${esc(S.loginErr)}</div>`:''}
+   <button class="btn primary" style="padding:12px 22px;font-size:17px" data-act="login">Iniciar sesión con Microsoft</button>
+   <p class="xs muted" style="margin-top:14px">¿Solo quieres ver la demo? <button class="btn sm ghost" data-act="useMock">Usar datos simulados</button></p></div>`;
+}
 function welcomeHTML(){
   const val=S.docs.filter(d=>visible(d)&&d.estado==='Validado');
   const recent=val.slice().sort((a,b)=>(b.registrado||'').localeCompare(a.registrado||'')).slice(0,5);
@@ -737,7 +763,7 @@ function viewConn(){
    </div>
    <label class="tgl"><input type="checkbox" data-c="contentSearch" ${c.contentSearch?'checked':''}><span>Buscar también dentro del texto de los archivos<small>Usa Microsoft Search (/search/query). Respeta los permisos del usuario.</small></span></label>
    <p class="xs muted">URI de redirección que debes registrar: <code>${esc(location.origin+location.pathname)}</code></p>
-   ${location.protocol==='http:'&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'<div class="status bad">Esta página se abrió por http. El inicio de sesión de Microsoft exige https: publícala con certificado (por ejemplo https://portal.vinateaytoyama.com/ytlp/).</div>':''}</div>
+   ${location.protocol==='http:'&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'<div class="status bad">Esta página se abrió por http. El inicio de sesión de Microsoft exige https: publícala con certificado (por ejemplo https://portal.vinateatoyama.com/ytlp/).</div>':''}</div>
   <div class="panel blk"><h2>2. Columnas de la biblioteca</h2><p>Nombre interno de cada columna que llena el flujo de la fase 1 (paso 16). Cambia solo si en tu biblioteca se llaman distinto.</p>
    <div class="tw"><table class="t maptbl"><thead><tr><th>Campo del buscador</th><th>Nombre interno en SharePoint</th></tr></thead><tbody>
    ${Object.entries(c.map).map(([k,v])=>`<tr><td>${esc(k)}</td><td><input data-map="${k}" value="${esc(v)}" aria-label="Columna para ${esc(k)}"></td></tr>`).join('')}</tbody></table></div></div>
@@ -792,8 +818,8 @@ document.addEventListener('click',async e=>{
     case 'csv':{const cols=['at','q','rol','res','n','pend','abierto','doc','ok','pedido'];const csv=[cols.join(';')].concat(S.log.map(l=>cols.map(c=>'"'+String(l[c]??'').replace(/"/g,'""')+'"').join(';'))).join('\n');
       const a=document.createElement('a');a.href=URL.createObjectURL(new Blob(['﻿'+csv],{type:'text/csv'}));a.download='registro_busquedas_ytlp.csv';a.click();break}
     case 'clearLog':if(confirm('¿Borrar el registro de este navegador?')){S.log=[];saveLog();render()}break;
-    case 'connect':S.source='graph';store('ytlp-f2-src','graph');S.connMsg={c:'run',t:'Conectando… se abrirá la ventana de inicio de sesión de Microsoft.'};render();await loadData();break;
-    case 'useMock':S.source='mock';store('ytlp-f2-src','mock');S.connMsg=null;await loadData();break;
+    case 'connect':case 'login':S.source='graph';S.loginErr=null;store('ytlp-f2-src2','graph');S.connMsg={c:'run',t:'Conectando… se abrirá el inicio de sesión de Microsoft.'};render();await loadData(true);break;
+    case 'useMock':S.source='mock';S.needLogin=false;S.loginErr=null;store('ytlp-f2-src2','mock');S.connMsg=null;location.hash='buscar';await loadData();break;
   }
 });
 route();
