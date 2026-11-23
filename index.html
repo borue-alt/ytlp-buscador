@@ -260,7 +260,7 @@ code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:
    ===================================================================== */
 
 const GO_LIVE='2026-09-01';               // puesta en marcha de la fase 1 (desde aquí cubre el catálogo)
-const SITE_URL_DEMO='https://vinateatoyama.sharepoint.com/sites/YTLP';  // SUPUESTO
+const SITE_URL_DEMO='https://vinateaytoyama.sharepoint.com/sites/YTLP';  // SUPUESTO
 const LIB_DEMO='Documentos de clientes';
 
 /* ---------- Listas maestras (en real: listas SharePoint «Clientes-Dominios» y «Tipos documentales») ---------- */
@@ -737,7 +737,7 @@ function viewConn(){
    </div>
    <label class="tgl"><input type="checkbox" data-c="contentSearch" ${c.contentSearch?'checked':''}><span>Buscar también dentro del texto de los archivos<small>Usa Microsoft Search (/search/query). Respeta los permisos del usuario.</small></span></label>
    <p class="xs muted">URI de redirección que debes registrar: <code>${esc(location.origin+location.pathname)}</code></p>
-   ${location.protocol==='http:'&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'<div class="status bad">Esta página se abrió por http. El inicio de sesión de Microsoft exige https: publícala con certificado (por ejemplo https://portal.vinateatoyama.com/ytlp/).</div>':''}</div>
+   ${location.protocol==='http:'&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'<div class="status bad">Esta página se abrió por http. El inicio de sesión de Microsoft exige https: publícala con certificado (por ejemplo https://portal.vinateaytoyama.com/ytlp/).</div>':''}</div>
   <div class="panel blk"><h2>2. Columnas de la biblioteca</h2><p>Nombre interno de cada columna que llena el flujo de la fase 1 (paso 16). Cambia solo si en tu biblioteca se llaman distinto.</p>
    <div class="tw"><table class="t maptbl"><thead><tr><th>Campo del buscador</th><th>Nombre interno en SharePoint</th></tr></thead><tbody>
    ${Object.entries(c.map).map(([k,v])=>`<tr><td>${esc(k)}</td><td><input data-map="${k}" value="${esc(v)}" aria-label="Columna para ${esc(k)}"></td></tr>`).join('')}</tbody></table></div></div>
