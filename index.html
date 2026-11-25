@@ -146,6 +146,7 @@ main{max-width:1240px;margin:0 auto;padding:22px 20px 60px}
 .nores h3{font-size:17px;margin-bottom:8px}
 .nores ul{margin:0 0 14px;padding-left:20px;font-size:14.5px}
 .nores li{margin-bottom:5px}
+.mailbox{background:var(--brand-soft);border-radius:12px;padding:12px;margin-top:4px}
 .welcome{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
 .welcome .panel{padding:16px}
 .welcome b{display:block;font-size:28px;font-weight:800;color:var(--brand)}
@@ -589,6 +590,7 @@ async function submitQuery(q){
   const entry={id:uid('l'),at:new Date().toISOString(),q:S.q,n:r.res.length,pend:r.pend.length,res:r.res.length?'Encontrado':r.pend.length?'En revisión del CID':'No figura',ms:r.ms,abierto:null,ok:null};
   S.log.push(entry);saveLog();S.lastLog=entry.id;
   render();
+  if(innerWidth<900){const h=$('.rhead');if(h){document.activeElement&&document.activeElement.blur();h.scrollIntoView({block:'start'});scrollBy(0,-70)}}   // en el celular, mostrar resultados
 }
 
 /* =====================================================================
@@ -704,13 +706,17 @@ function noResHTML(pend){
   if(f.desde){const y=S.docs.filter(d=>visible(d)&&d.estado==='Validado'&&matches(d,{...f,desde:'',hasta:''},S.freeText)).sort((a,b)=>b.fecha.localeCompare(a.fecha))[0];if(y) items.push(`No hay del período elegido; el más reciente es del ${fmtDate(y.fecha)}. <button class="btn sm" data-open="${y.id}">Abrir</button>`)}
   items.push(`El catálogo guarda lo recibido desde el ${fmtDate(GO_LIVE)}. Si el cliente lo envió antes, estará en las carpetas de siempre.`);
   if(!pend.length) items.push('Si no, lo más rápido es pedirlo ahora: ya sabes que no lo tenemos.');
-  let mail='';
-  if(c&&!pend.length){
-    const what=(t?t.nombre.toLowerCase():'el documento')+(f.trabajador?' de '+f.trabajador:'')+(f.desde?' ('+f.desde.slice(0,4)+')':'');
-    const body=`Estimado(a) ${c.contacto}:\n\nPara el caso en curso, ¿nos podría enviar ${what}?\n\nMuchas gracias.`;
-    mail=`<a class="btn primary" href="mailto:${esc(c.email)}?subject=${encodeURIComponent('Solicitud de '+what)}&body=${encodeURIComponent(body)}" data-act="req">Pedir al cliente por correo</a> <span class="xs muted">Cuando responda, reenvía el correo a YTLP y entrará solo al catálogo.</span>`;
-  }
-  return `<div class="nores"><h3>No figura en el catálogo</h3><ul>${items.map(i=>`<li>${i}</li>`).join('')}</ul>${mail}</div>`;
+  // Correo para pedirlo: siempre disponible (con o sin filtros). Solo abre el correo del usuario; no usa permisos de Graph.
+  const useQ=!!S.q&&(!c||!t);   // sin cliente o sin tipo reconocido: usar la búsqueda tal cual
+  const what=(t&&!useQ)?t.nombre.toLowerCase()+(f.trabajador?' de '+f.trabajador:'')+(f.desde?' ('+f.desde.slice(0,4)+')':'')+(c?' de '+c.nombre:''):(S.q?'«'+S.q+'»':'el documento')+(c&&!S.q?' de '+c.nombre:'');
+  const subject='Solicitud de documento: '+((t&&!useQ)?t.nombre+(f.trabajador?' – '+f.trabajador:''):(S.q||'documento'))+(c?' – '+c.corto:'');
+  const body=`${c?'Estimado(a) '+c.contacto+':':'Estimado(a):'}\n\nPara el caso en curso, ¿nos podría enviar ${what}?\n\nMuchas gracias.`;
+  const to=c?c.email:'';
+  const qs=`subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  const owa=`https://outlook.office.com/mail/deeplink/compose?${to?'to='+encodeURIComponent(to)+'&':''}${qs}`;
+  const mail=`<div class="mailbox"><div class="actions"><a class="btn primary" href="mailto:${esc(to)}?${qs}" data-act="req">✉ Abrir correo para pedirlo</a><a class="btn" href="${owa}" target="_blank" rel="noopener" data-act="req">Abrir en Outlook web</a></div>
+    <p class="xs muted" style="margin-top:8px">${to?'Va dirigido a '+esc(c.contacto)+' ('+esc(to)+'). ':'Elige el destinatario en el correo. '}${pend.length?'Ojo: hay un documento en revisión del CID que podría ser este. ':''}Cuando el cliente responda, reenvía el correo a YTLP y entrará solo al catálogo.</p></div>`;
+  return `<div class="nores"><h3>No figura en el catálogo</h3>${mail}<ul style="margin-top:14px">${items.map(i=>`<li>${i}</li>`).join('')}</ul></div>`;
 }
 function loginHTML(){
   return `<div class="panel" style="padding:24px;text-align:center;border-top:4px solid var(--brand)">
