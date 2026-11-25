@@ -411,11 +411,13 @@ function normDoc(d){
    ===================================================================== */
 const DEFAULT_MAP={nombre:'FileLeafRef',cliente:'Cliente',tipo:'TipoDocumental',fecha:'FechaDocumento',vigencia:'Vigencia',hasta:'VigenteHasta',
   trabajador:'Trabajador',abogado:'Abogado',estado:'Estado',reemplazadoPor:'VersionMasReciente',recepciones:'Recepciones',origen:'CorreoOrigen',confianza:'Confianza'};
-const DEFAULT_CFG={tenantId:PRESET_TENANT_ID,clientId:PRESET_CLIENT_ID,siteUrl:SITE_URL_DEMO,library:LIB_DEMO,map:DEFAULT_MAP,contentSearch:true};
+const DEFAULT_CFG={tenantId:PRESET_TENANT_ID,clientId:PRESET_CLIENT_ID,siteUrl:SITE_URL_DEMO,library:LIB_DEMO,map:DEFAULT_MAP,contentSearch:false};
 let msalApp=null;
 function loadScript(src){return new Promise((ok,ko)=>{const s=document.createElement('script');s.src=src;s.onload=ok;s.onerror=()=>ko(new Error('No se pudo cargar '+src));document.head.appendChild(s)})}
 class NeedLogin extends Error{constructor(){super('Falta iniciar sesión')}}
-const SCOPES=['Sites.Read.All','User.Read'];
+// Permiso mínimo: Sites.Selected (delegado). La app solo puede leer los sitios que un administrador le asignó (YTLP),
+// y además solo lo que el usuario ya puede ver en SharePoint. Nada se envía a servicios externos.
+const SCOPES=['Sites.Selected'];
 async function ensureMsal(cfg){
   if(!window.msal) await loadScript('https://cdn.jsdelivr.net/npm/@azure/msal-browser@3.27.0/lib/msal-browser.min.js');
   if(!msalApp){
@@ -485,6 +487,7 @@ const S={view:'buscar',docs:[],loading:true,source:'mock',cfg:Object.assign({},D
   q:'',f:emptyFilters(),sort:'rel',limit:20,last:null,log:store('ytlp-f2-log')||[],
   contentHits:null,connMsg:null,sheet:false};
 S.cfg.map=Object.assign({},DEFAULT_MAP,S.cfg.map||{});
+S.cfg.contentSearch=false;
 ['tenantId','clientId','siteUrl','library'].forEach(k=>{if(!S.cfg[k]) S.cfg[k]=DEFAULT_CFG[k]});
 if(/vinateatoyama\.sharepoint/.test(S.cfg.siteUrl)) S.cfg.siteUrl=SITE_URL_DEMO;   // corrige el dominio de versiones anteriores
 S.source=store('ytlp-f2-src2')==='mock'?'mock':(S.cfg.tenantId&&S.cfg.clientId?'graph':'mock');
@@ -581,7 +584,7 @@ async function submitQuery(q){
   if(!S.q){S.freeText=[];render();return}
   const p=parseQuery(S.q);applyParsed(p);
   S.contentHits=null;
-  if(S.source==='graph'&&S.cfg.contentSearch&&p.rest.length){try{S.contentHits=await GraphSource.contentHits(S.cfg,p.rest.join(' '))}catch(e){toast('La búsqueda en el contenido falló; se usan solo los campos')}}
+  if(false&&S.source==='graph'&&S.cfg.contentSearch&&p.rest.length)/* desactivado: /search/query no funciona con Sites.Selected */{try{S.contentHits=await GraphSource.contentHits(S.cfg,p.rest.join(' '))}catch(e){toast('La búsqueda en el contenido falló; se usan solo los campos')}}
   const r=runSearch();
   const entry={id:uid('l'),at:new Date().toISOString(),q:S.q,n:r.res.length,pend:r.pend.length,res:r.res.length?'Encontrado':r.pend.length?'En revisión del CID':'No figura',ms:r.ms,abierto:null,ok:null};
   S.log.push(entry);saveLog();S.lastLog=entry.id;
@@ -767,14 +770,13 @@ function viewLog(){
 function viewConn(){
   const c=S.cfg;
   return `<div class="page"><h1>Conexión con SharePoint</h1><p>El buscador funciona con datos simulados. Para usar la biblioteca real del catálogo (la que llena la fase 1), completa estos datos. La guía paso a paso está en <b>LEEME.md</b>, junto a este archivo.</p>
-  <div class="panel blk"><h2>1. Aplicación y sitio</h2><p>Del registro de la aplicación en Microsoft Entra ID (tipo «Aplicación de página única», permisos delegados <code>Sites.Read.All</code> y <code>User.Read</code>).</p>
+  <div class="panel blk"><h2>1. Aplicación y sitio</h2><p>Del registro de la aplicación en Microsoft Entra ID (tipo «Aplicación de página única», permiso delegado <code>Sites.Selected</code>, con lectura asignada solo al sitio YTLP).</p>
    <div class="cgrid">
     <div class="field"><label for="c-ten">Id. de inquilino (tenant)</label><input id="c-ten" type="text" data-c="tenantId" value="${esc(c.tenantId)}" placeholder="00000000-0000-0000-0000-000000000000"></div>
     <div class="field"><label for="c-cli">Id. de aplicación (cliente)</label><input id="c-cli" type="text" data-c="clientId" value="${esc(c.clientId)}" placeholder="00000000-0000-0000-0000-000000000000"></div>
     <div class="field"><label for="c-site">URL del sitio SharePoint</label><input id="c-site" type="url" data-c="siteUrl" value="${esc(c.siteUrl)}"></div>
     <div class="field"><label for="c-lib">Biblioteca del catálogo</label><input id="c-lib" type="text" data-c="library" value="${esc(c.library)}"></div>
    </div>
-   <label class="tgl"><input type="checkbox" data-c="contentSearch" ${c.contentSearch?'checked':''}><span>Buscar también dentro del texto de los archivos<small>Usa Microsoft Search (/search/query). Respeta los permisos del usuario.</small></span></label>
    <p class="xs muted">URI de redirección que debes registrar: <code>${esc(location.origin+location.pathname)}</code></p>
    ${location.protocol==='http:'&&!/^(localhost|127\.0\.0\.1)$/.test(location.hostname)?'<div class="status bad">Esta página se abrió por http. El inicio de sesión de Microsoft exige https: publícala con certificado (por ejemplo https://portal.vinateatoyama.com/ytlp/).</div>':''}</div>
   <div class="panel blk"><h2>2. Columnas de la biblioteca</h2><p>Nombre interno de cada columna que llena el flujo de la fase 1 (paso 16). Cambia solo si en tu biblioteca se llaman distinto.</p>
